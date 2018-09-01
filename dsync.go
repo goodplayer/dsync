@@ -9,23 +9,39 @@ import (
 	"io"
 	"errors"
 	"encoding/json"
+	"io/ioutil"
+	"bytes"
+	"strings"
 )
 
 var (
 	mode    string
 	verbose bool
 
-	// for generate mode
+	// generate mode
 	path         string
 	generateFile string
+	skipDirFile  string
+
+	// compare mode
+	sourceFile string
+	destFile   string
+	resultFile string
 )
 
 func init() {
 	flag.StringVar(&mode, "mode", "", "-mode=generate")
 	flag.BoolVar(&verbose, "v", false, "-v")
 
+	// generate mode
 	flag.StringVar(&path, "path", "", "-path=/home/USER1/DIR")
 	flag.StringVar(&generateFile, "gen", "", "-gen=/home/USER2/gen_file")
+	flag.StringVar(&skipDirFile, "skip", "", "-skip=/home/USER2/skip_file , only support skip directory")
+
+	// compare mode
+	flag.StringVar(&sourceFile, "src", "", "-src=/home/USER2/source_file")
+	flag.StringVar(&destFile, "dst", "", "-dst=/home/USER2/dst_file")
+	flag.StringVar(&resultFile, "result", "", "-result=/home/USER2/result_file")
 }
 
 func main() {
@@ -35,7 +51,7 @@ func main() {
 	case "generate":
 		generate()
 	case "compare":
-		panic("not implemented")
+		compare()
 	default:
 		fmt.Fprintln(os.Stderr, "unknown mode:", mode)
 		fmt.Fprintln(flag.CommandLine.Output(), "usage:")
@@ -82,6 +98,18 @@ func generate() {
 		os.Exit(1)
 	}
 
+	var skipDirName map[string]struct{}
+	if len(skipDirFile) != 0 {
+		var err error
+		skipDirName, err = readSkipFile(skipDirFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "read skip file error:", err)
+			os.Exit(1)
+		}
+	} else {
+		skipDirName = make(map[string]struct{})
+	}
+
 	info, err := os.Lstat(path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open file error:", err)
@@ -122,6 +150,9 @@ func generate() {
 				return errors.New("p1:" + err.Error())
 			}
 			if info.IsDir() {
+				if _, ok := skipDirName[info.Name()]; ok {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			realPath, err := filepath.Abs(path)
@@ -159,6 +190,34 @@ func generate() {
 	}
 }
 
+func readSkipFile(file string) (map[string]struct{}, error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	buf := bytes.NewBuffer(data)
+	result := make(map[string]struct{})
+	for {
+		line, err := buf.ReadString('\n')
+		//FIXME should trim if filename starts/ends with space??
+		line = strings.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		result[line] = struct{}{}
+		if err != nil {
+			if err == io.EOF {
+				return result, nil
+			}
+			return nil, err
+		}
+	}
+}
+
 func genFileSha256(file string) (string, error) {
 	digest := sha256.New()
 	f, err := os.Open(file)
@@ -188,4 +247,19 @@ func writeToFile(store *GeneratedStore, dst string) error {
 		return err
 	}
 	return nil
+}
+
+func compare() {
+	if len(sourceFile) == 0 {
+		fmt.Fprintln(os.Stderr, "source file is empty")
+		os.Exit(1)
+	}
+	if len(destFile) == 0 {
+		fmt.Fprintln(os.Stderr, "dest file is empty")
+		os.Exit(1)
+	}
+	if len(resultFile) == 0 {
+		fmt.Fprintln(os.Stderr, "result file is empty")
+		os.Exit(1)
+	}
 }

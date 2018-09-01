@@ -238,6 +238,7 @@ func writeToFile(store *GeneratedStore, dst string) error {
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 	data, err := json.Marshal(store)
 	if err != nil {
 		return err
@@ -247,6 +248,24 @@ func writeToFile(store *GeneratedStore, dst string) error {
 		return err
 	}
 	return nil
+}
+
+func readFromFile(file string) (*GeneratedStore, error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	store := new(GeneratedStore)
+	err = json.Unmarshal(data, store)
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 func compare() {
@@ -262,4 +281,109 @@ func compare() {
 		fmt.Fprintln(os.Stderr, "result file is empty")
 		os.Exit(1)
 	}
+
+	sourceStore, err := readFromFile(sourceFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "open source file error:", err)
+		os.Exit(1)
+	}
+	destStore, err := readFromFile(destFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "open dest file error:", err)
+		os.Exit(1)
+	}
+
+	if sourceStore.IsDir != destStore.IsDir {
+		fmt.Fprintln(os.Stderr, "source type of file/dir is different from dst one's")
+		os.Exit(1)
+	}
+
+	sourceMap := make(map[string]FileValue)
+	dstMap := make(map[string]FileValue)
+	for _, v := range sourceStore.FileList {
+		_, ok := sourceMap[v.RelPath]
+		if ok {
+			fmt.Fprintln(os.Stderr, "source file duplicated record:", v.RelPath)
+			os.Exit(1)
+		}
+		sourceMap[v.RelPath] = v
+	}
+	for _, v := range destStore.FileList {
+		_, ok := dstMap[v.RelPath]
+		if ok {
+			fmt.Fprintln(os.Stderr, "dest file duplicated record:", v.RelPath)
+			os.Exit(1)
+		}
+		dstMap[v.RelPath] = v
+	}
+
+	result := new(CompareResult)
+
+	// compare
+	var dupList []string
+	for k, srcV := range sourceMap {
+		dstV, ok := dstMap[k]
+		if ok {
+			dupList = append(dupList, k)
+
+			// check same
+			if srcV.Size != dstV.Size || srcV.Sha256 != dstV.Sha256 {
+				result.Diff = append(result.Diff, CompareDifferentValue{
+					SrcValue: srcV,
+					DstValue: dstV,
+				})
+			}
+		}
+	}
+	// remove dup
+	for _, v := range dupList {
+		delete(sourceMap, v)
+		delete(dstMap, v)
+	}
+
+	// find only
+	for _, v := range sourceMap {
+		result.SrcOnly = append(result.SrcOnly, v)
+	}
+	for _, v := range dstMap {
+		result.DstOnly = append(result.DstOnly, v)
+	}
+
+	// compare result
+	if verbose {
+		fmt.Println(result)
+	}
+	err = writeCompareResult(resultFile, result)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "write compare result error:", err)
+		os.Exit(1)
+	}
+}
+
+func writeCompareResult(file string, result *CompareResult) error {
+	f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	data, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+type CompareResult struct {
+	Diff    []CompareDifferentValue `json:"diff"`
+	SrcOnly []FileValue             `json:"src_only"`
+	DstOnly []FileValue             `json:"dst_only"`
+}
+
+type CompareDifferentValue struct {
+	SrcValue FileValue `json:"src"`
+	DstValue FileValue `json:"dst"`
 }

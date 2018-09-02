@@ -106,6 +106,9 @@ func generate() {
 			fmt.Fprintln(os.Stderr, "read skip file error:", err)
 			os.Exit(1)
 		}
+		if verbose {
+			fmt.Println("skipped dir names:", skipDirName)
+		}
 	} else {
 		skipDirName = make(map[string]struct{})
 	}
@@ -147,9 +150,14 @@ func generate() {
 		}
 		err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
+				// if file is in skipDirName and error, then still skip
+				if _, ok := skipDirName[info.Name()]; ok {
+					return filepath.SkipDir
+				}
 				return errors.New("p1:" + err.Error())
 			}
 			if info.IsDir() {
+				// skip dir
 				if _, ok := skipDirName[info.Name()]; ok {
 					return filepath.SkipDir
 				}

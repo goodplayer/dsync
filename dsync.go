@@ -179,7 +179,7 @@ func generate() {
 				return errors.New("p4:" + err.Error())
 			}
 			store.FileList = append(store.FileList, FileValue{
-				RelPath: relPath,
+				RelPath: filepath.ToSlash(relPath),
 				Size:    info.Size(),
 				Sha256:  result,
 			})
